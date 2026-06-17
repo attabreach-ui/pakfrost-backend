@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: pakfrost-api
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: JWT_ACCESS_EXPIRY
+        value: 24h
+      - key: JWT_REFRESH_EXPIRY
+        value: 7d
+      - key: PORT
+        value: 3001
+      - key: CORS_ORIGIN
+        sync: false
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 900000
+      - key: RATE_LIMIT_MAX
+        value: 100
+      - key: LOGIN_RATE_LIMIT_MAX
+        value: 10

@@ -1,0 +1,252 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-1.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ──────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  admin
+  supervisor
+  operator
+  viewer
+}
+
+enum PalletStatus {
+  active
+  dispatched
+  expired
+  damaged
+}
+
+enum PalletCondition {
+  Good
+  Damaged
+  Partial
+}
+
+enum MovementType {
+  IN
+  OUT
+  MOVE
+}
+
+enum DriverStatus {
+  active
+  inactive
+}
+
+enum VehicleType {
+  Reefer_Truck
+  Container
+  Pickup
+  Van
+  Other
+}
+
+enum VehicleOwnership {
+  own
+  external
+}
+
+enum VehicleStatus {
+  active
+  inactive
+}
+
+// ── Tables ─────────────────────────────────────────────────────────────────
+
+model User {
+  id               String    @id @default(uuid())
+  username         String    @unique @db.VarChar(50)
+  passwordHash     String    @map("password_hash") @db.Text
+  name             String    @db.VarChar(100)
+  role             UserRole  @default(operator)
+  avatar           String?   @db.VarChar(10)
+  isActive         Boolean   @default(true) @map("is_active")
+  customPermissions Json?    @map("custom_permissions")
+  refreshToken     String?   @map("refresh_token") @db.Text
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("users")
+}
+
+model Customer {
+  id             String    @id @default(uuid())
+  name           String    @db.VarChar(100)
+  code           String    @unique @db.VarChar(20)
+  contactPerson  String?   @map("contact_person") @db.VarChar(100)
+  phone          String?   @db.VarChar(20)
+  email          String?   @db.VarChar(100)
+  address        String?   @db.Text
+  tempRequirement String?  @map("temp_requirement") @db.VarChar(50)
+  contractExpiry DateTime? @map("contract_expiry") @db.Date
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  products       Product[]
+  pallets        Pallet[]
+
+  @@map("customers")
+}
+
+model Product {
+  id               String    @id @default(uuid())
+  customerId       String    @map("customer_id")
+  name             String    @db.VarChar(100)
+  code             String    @unique @db.VarChar(30)
+  category         String    @db.VarChar(50)
+  cartonsPerPallet Int       @default(0) @map("cartons_per_pallet")
+  weightPerCarton  Decimal   @map("weight_per_carton") @db.Decimal(10, 2)
+  uom              String    @default("Kg") @db.VarChar(5)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  customer         Customer  @relation(fields: [customerId], references: [id])
+  pallets          Pallet[]
+
+  @@map("products")
+}
+
+model Driver {
+  id             String       @id @default(uuid())
+  name           String       @db.VarChar(100)
+  code           String       @unique @db.VarChar(20)
+  cnic           String       @db.VarChar(20)
+  phone          String       @db.VarChar(20)
+  licenseNo      String       @map("license_no") @db.VarChar(30)
+  licenseExpiry  DateTime     @map("license_expiry") @db.Date
+  joiningDate    DateTime?    @map("joining_date") @db.Date
+  status         DriverStatus @default(active)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("drivers")
+}
+
+model Vehicle {
+  id                String           @id @default(uuid())
+  vehicleNo         String           @unique @map("vehicle_no") @db.VarChar(20)
+  type              VehicleType      @default(Reefer_Truck)
+  ownership         VehicleOwnership @default(own)
+  routePermitExpiry DateTime?        @map("route_permit_expiry") @db.Date
+  tokenExpiry       DateTime?        @map("token_expiry") @db.Date
+  fitnessExpiry     DateTime?        @map("fitness_expiry") @db.Date
+  insuranceExpiry   DateTime?        @map("insurance_expiry") @db.Date
+  status            VehicleStatus    @default(active)
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("vehicles")
+}
+
+model Pallet {
+  id                  String          @id @db.VarChar(30)
+  igpNumber           String          @map("igp_number") @db.VarChar(20)
+  vehicleNo           String          @map("vehicle_no") @db.VarChar(20)
+  driverName          String          @map("driver_name") @db.VarChar(100)
+  driverId            String?         @map("driver_id") @db.VarChar(50)
+  sealNumber          String?         @map("seal_number") @db.VarChar(30)
+  productId           String          @map("product_id")
+  customerId          String          @map("customer_id")
+  productName         String          @map("product_name") @db.VarChar(150)
+  productCode         String          @map("product_code") @db.VarChar(30)
+  customerName        String          @map("customer_name") @db.VarChar(100)
+  cartons             Int
+  weightPerCarton     Decimal         @map("weight_per_carton") @db.Decimal(10, 2)
+  totalWeight         Decimal         @map("total_weight") @db.Decimal(12, 2)
+  packingType         String?         @map("packing_type") @db.VarChar(20)
+  mfgDate             DateTime?       @map("mfg_date") @db.Date
+  expiryDate          DateTime        @map("expiry_date") @db.Date
+  batchNo             String?         @map("batch_no") @db.VarChar(50)
+  lotNo               String?         @map("lot_no") @db.VarChar(50)
+  orderRef            String?         @map("order_ref") @db.VarChar(50)
+  dateIn              DateTime        @map("date_in") @db.Date
+  timeIn              String?         @map("time_in") @db.VarChar(5)
+  departureTime       String?         @map("departure_time") @db.VarChar(5)
+  room                String          @db.VarChar(20)
+  side                String          @db.VarChar(1)
+  row                 String          @db.VarChar(5)
+  slot                String          @db.VarChar(5)
+  position            Int?
+  status              PalletStatus    @default(active)
+  condition           PalletCondition @default(Good)
+  temperatureAtReceipt Decimal        @map("temperature_at_receipt") @db.Decimal(5, 1)
+  productTemperature  String?         @map("product_temperature") @db.VarChar(10)
+  notes               String?         @db.Text
+  revised             Boolean         @default(false)
+  revisedAt           DateTime?       @map("revised_at") @db.Timestamptz
+  createdAt           DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime        @updatedAt @map("updated_at") @db.Timestamptz
+
+  product             Product         @relation(fields: [productId], references: [id])
+  customer            Customer        @relation(fields: [customerId], references: [id])
+  movements           StockMovement[]
+
+  @@index([igpNumber])
+  @@index([expiryDate])
+  @@index([customerId])
+  @@index([status])
+  @@map("pallets")
+}
+
+model StockMovement {
+  id           String       @id @default(uuid())
+  docNumber    String       @map("doc_number") @db.VarChar(20)
+  type         MovementType
+  palletId     String       @map("pallet_id") @db.VarChar(30)
+  customerId   String       @map("customer_id") @db.VarChar(50)
+  customerName String       @map("customer_name") @db.VarChar(100)
+  productName  String       @map("product_name") @db.VarChar(150)
+  productCode  String       @map("product_code") @db.VarChar(30)
+  cartons      Int
+  totalWeight  Decimal      @map("total_weight") @db.Decimal(12, 2)
+  location     String       @db.VarChar(50)
+  vehicleNo    String?      @map("vehicle_no") @db.VarChar(20)
+  driverName   String?      @map("driver_name") @db.VarChar(100)
+  driverId     String?      @map("driver_id") @db.VarChar(50)
+  destination  String?      @db.VarChar(100)
+  reason       String?      @db.VarChar(100)
+  notes        String?      @db.Text
+  vehicleTemp  String?      @map("vehicle_temp") @db.VarChar(10)
+  condition    String?      @db.VarChar(20)
+  operatorName String?      @map("operator_name") @db.VarChar(100)
+  orderRef     String?      @map("order_ref") @db.VarChar(50)
+  revised      Boolean      @default(false)
+  revisedAt    DateTime?    @map("revised_at") @db.Timestamptz
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  pallet       Pallet       @relation(fields: [palletId], references: [id])
+
+  @@index([docNumber])
+  @@index([type])
+  @@index([customerId])
+  @@index([createdAt])
+  @@map("stock_movements")
+}
+
+model TemperatureReading {
+  id          String   @id @default(uuid())
+  room        String   @db.VarChar(20)
+  temperature Decimal  @db.Decimal(5, 1)
+  recordedAt  DateTime @default(now()) @map("recorded_at") @db.Timestamptz
+  recordedBy  String   @map("recorded_by") @db.VarChar(100)
+  notes       String?  @db.Text
+
+  @@index([room])
+  @@index([recordedAt])
+  @@map("temperature_readings")
+}
+
+model DocCounter {
+  id     String @id @default("main")
+  igpSeq Int    @default(0) @map("igp_seq")
+  igpYear Int   @default(2026) @map("igp_year")
+  ogpSeq Int    @default(0) @map("ogp_seq")
+  ogpYear Int   @default(2026) @map("ogp_year")
+
+  @@map("doc_counters")
+}
