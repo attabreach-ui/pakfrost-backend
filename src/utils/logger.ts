@@ -7,7 +7,7 @@ export const logger = {
   warn:  (msg: string, ...args: unknown[]) => console.warn(`[${timestamp()}] ⚠ WARN  ${msg}`, ...args),
   error: (msg: string, ...args: unknown[]) => console.error(`[${timestamp()}] ✖ ERROR ${msg}`, ...args),
   debug: (msg: string, ...args: unknown[]) => {
-    if (env.NODE_ENV === 'development') {
+    if (env?.NODE_ENV === 'development') {
       console.log(`[${timestamp()}] ◆ DEBUG ${msg}`, ...args);
     }
   },

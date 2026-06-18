@@ -23,14 +23,14 @@ export interface AuthUser {
 // ── Token helpers ───────────────────────────────────────────────────────────
 
 function signAccessToken(payload: JwtPayload): string {
-  return jwt.sign(payload, env.JWT_ACCESS_SECRET, {
-    expiresIn: env.JWT_ACCESS_EXPIRY as jwt.SignOptions['expiresIn'],
+  return jwt.sign(payload, env?.JWT_ACCESS_SECRET ?? '', {
+    expiresIn: (env?.JWT_ACCESS_EXPIRY ?? '15m') as jwt.SignOptions['expiresIn'],
   });
 }
 
 function signRefreshToken(payload: JwtPayload): string {
-  return jwt.sign(payload, env.JWT_REFRESH_SECRET, {
-    expiresIn: env.JWT_REFRESH_EXPIRY as jwt.SignOptions['expiresIn'],
+  return jwt.sign(payload, env?.JWT_REFRESH_SECRET ?? '', {
+    expiresIn: (env?.JWT_REFRESH_EXPIRY ?? '7d') as jwt.SignOptions['expiresIn'],
   });
 }
 
@@ -69,7 +69,7 @@ export async function refreshTokens(
   incomingRefreshToken: string,
 ): Promise<TokenPair | null> {
   try {
-    const payload = jwt.verify(incomingRefreshToken, env.JWT_REFRESH_SECRET) as JwtPayload;
+    const payload = jwt.verify(incomingRefreshToken, env?.JWT_REFRESH_SECRET ?? '') as JwtPayload;
     const user    = await prisma.user.findUnique({ where: { id: payload.userId } });
 
     if (!user?.refreshToken || !user.isActive) return null;

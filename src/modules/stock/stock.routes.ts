@@ -138,12 +138,12 @@ function formatLocation(room: string, side: string, row: string, slot: string, p
 // ── Routes ─────────────────────────────────────────────────────────────────
 
 // Preview next IGP/OGP numbers
-router.get('/next-igp', async (_req, res) => {
+router.get('/next-igp', async (_req: Request, res: Response) => {
   try { sendSuccess(res, { number: await peekNextIGP() }); }
   catch (err) { sendServerError(res); }
 });
 
-router.get('/next-ogp', async (_req, res) => {
+router.get('/next-ogp', async (_req: Request, res: Response) => {
   try { sendSuccess(res, { number: await peekNextOGP() }); }
   catch (err) { sendServerError(res); }
 });
