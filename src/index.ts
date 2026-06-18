@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { env } from './config/env';
+import { connectDatabase } from './config/database';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler.middleware';
 
@@ -85,10 +86,20 @@ app.use((_req: Request, res: Response) => {
 app.use(errorHandler);
 
 // ── Start server ────────────────────────────────────────────────────────────
-app.listen(port, () => {
-  logger.info(`🚀 PAKFROST API running on port ${port} [${nodeEnv}]`);
-  logger.info(`📋 Health: http://localhost:${port}/health`);
-  logger.info(`🗄️  API Base: http://localhost:${port}${API}`);
-});
+async function start() {
+  try {
+    await connectDatabase();
+    app.listen(port, () => {
+      logger.info(`PAKFROST API running on port ${port} [${nodeEnv}]`);
+      logger.info(`Health: http://localhost:${port}/health`);
+      logger.info(`API Base: http://localhost:${port}${API}`);
+    });
+  } catch (err) {
+    logger.error('Failed to start API because the database is unavailable', err);
+    process.exit(1);
+  }
+}
+
+start();
 
 export default app;
