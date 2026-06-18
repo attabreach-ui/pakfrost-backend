@@ -5,8 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "prisma generate && tsc",
-    "start": "npm run db:deploy && node dist/index.js",
+    "build": "node scripts/deploy-db-if-configured.cjs && prisma generate && tsc",
+    "start": "node scripts/deploy-db-if-configured.cjs && node dist/index.js",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy || prisma db push --skip-generate",
     "db:push": "prisma db push",
