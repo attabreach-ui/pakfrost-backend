@@ -248,7 +248,7 @@ router.post('/in', requireMinRole('operator'), validate(stockInSchema), async (r
     await prisma.$transaction([
       prisma.pallet.createMany({ data: palletRows as any }),
       prisma.stockMovement.createMany({ data: movementRows as any }),
-    ], { timeout: 60000 });
+    ]);
 
     logger.info(`IGP created: ${igpNumber} — ${items.length} pallets`);
     sendCreated(
@@ -330,8 +330,7 @@ router.post('/out', requireMinRole('operator'), validate(stockOutSchema), async 
 
     // 5. Atomic transaction
     await prisma.$transaction(
-      [...palletUpdates, prisma.stockMovement.createMany({ data: movementRows as any })],
-      { timeout: 60000 }
+      [...palletUpdates, prisma.stockMovement.createMany({ data: movementRows as any })]
     );
 
     logger.info(`OGP created: ${ogpNumber} — ${items.length} items dispatched`);
@@ -383,7 +382,7 @@ router.post('/move', requireMinRole('operator'), validate(movePalletSchema), asy
           operatorName: operator,
         },
       }),
-    ], { timeout: 15000 });
+    ]);
 
     logger.info(`Pallet moved: ${palletId} → ${location}`);
     sendSuccess(res, { palletId, newLocation: location }, 'Pallet moved successfully');
@@ -446,7 +445,7 @@ router.put('/igp/:number', requireMinRole('supervisor'), validate(editIGPSchema)
           revisedAt:  now,
         },
       }),
-    ], { timeout: 60000 });
+    ]);
 
     sendSuccess(res, { igpNumber }, `IGP ${igpNumber} updated`);
   } catch (err) { logger.error('stock.editIGP', err); sendServerError(res); }
@@ -519,7 +518,7 @@ router.put('/ogp/:number', requireMinRole('supervisor'), validate(editOGPSchema)
       })
       .filter((op: any) => op !== null);
 
-    await prisma.$transaction([...movementUpdates, ...palletUpdates], { timeout: 60000 });
+    await prisma.$transaction([...movementUpdates, ...palletUpdates]);
 
     sendSuccess(res, { ogpNumber }, `OGP ${ogpNumber} updated`);
   } catch (err) { logger.error('stock.editOGP', err); sendServerError(res); }
