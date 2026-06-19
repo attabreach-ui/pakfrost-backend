@@ -1,5 +1,4 @@
 import { Request, Response, NextFunction } from 'express';
-import { Prisma } from '@prisma/client';
 import { logger } from '../utils/logger';
 import { sendError, sendServerError } from '../utils/response';
 
@@ -11,9 +10,11 @@ export const errorHandler = (
 ): void => {
   logger.error(`${req.method} ${req.path} — ${err.message}`);
 
+  const prismaErr = err as any;
+
   // Prisma known errors
-  if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    switch (err.code) {
+  if (prismaErr.code && prismaErr.clientVersion) {
+    switch (prismaErr.code) {
       case 'P2002':
         sendError(res, 'A record with this value already exists (duplicate)', 409);
         return;
@@ -24,15 +25,9 @@ export const errorHandler = (
         sendError(res, 'Related record not found (foreign key constraint)', 400);
         return;
       default:
-        sendError(res, `Database error: ${err.code}`, 400);
+        sendError(res, `Database error: ${prismaErr.code}`, 400);
         return;
     }
-  }
-
-  // Prisma validation errors
-  if (err instanceof Prisma.PrismaClientValidationError) {
-    sendError(res, 'Invalid data provided to database', 400);
-    return;
   }
 
   // Generic server error

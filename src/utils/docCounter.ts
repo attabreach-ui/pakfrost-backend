@@ -1,11 +1,14 @@
 import prisma from '../config/database';
-import { Prisma } from '@prisma/client';
 
-type Tx = Prisma.TransactionClient;
+// ── DocCounter utility ─────────────────────────────────────────────────────
+// getNextIGP / getNextOGP are called OUTSIDE transactions now.
+// Prisma sequential transactions (array form) do NOT support interactive tx client,
+// so docCounter must be incremented before the transaction opens.
+// This is safe: if the transaction fails after counter increment,
+// the number is simply skipped (gap in sequence) — acceptable for WMS use.
 
-export async function getNextIGP(tx?: Tx): Promise<string> {
-  const client = tx ?? prisma;
-  const counter = await client.docCounter.upsert({
+export async function getNextIGP(): Promise<string> {
+  const counter = await prisma.docCounter.upsert({
     where:  { id: 'main' },
     create: { id: 'main', igpSeq: 1 },
     update: { igpSeq: { increment: 1 } },
@@ -13,9 +16,8 @@ export async function getNextIGP(tx?: Tx): Promise<string> {
   return `IGP-${String(counter.igpSeq).padStart(4, '0')}`;
 }
 
-export async function getNextOGP(tx?: Tx): Promise<string> {
-  const client = tx ?? prisma;
-  const counter = await client.docCounter.upsert({
+export async function getNextOGP(): Promise<string> {
+  const counter = await prisma.docCounter.upsert({
     where:  { id: 'main' },
     create: { id: 'main', ogpSeq: 1 },
     update: { ogpSeq: { increment: 1 } },

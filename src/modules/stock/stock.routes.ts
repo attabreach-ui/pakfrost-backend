@@ -53,28 +53,28 @@ const stockOutItemSchema = z.object({
 
 const stockOutSchema = z.object({
   header: z.object({
-    vehicleNo:   z.string().optional(),
-    driverId:    z.string().optional(),
-    driverName:  z.string().optional(),
-    destination: z.string().optional(),
-    reason:      z.string().optional(),
-    notes:       z.string().optional(),
-    orderRef:    z.string().optional(),
-    tempCheck:   z.string().optional(),
-    condition:   z.string().optional(),
+    vehicleNo:    z.string().optional(),
+    driverId:     z.string().optional(),
+    driverName:   z.string().optional(),
+    destination:  z.string().optional(),
+    reason:       z.string().optional(),
+    notes:        z.string().optional(),
+    orderRef:     z.string().optional(),
+    tempCheck:    z.string().optional(),
+    condition:    z.string().optional(),
     operatorName: z.string().optional(),
   }),
   items: z.array(stockOutItemSchema).min(1),
 });
 
 const movePalletSchema = z.object({
-  palletId:  z.string().min(1),
-  newRoom:   z.string().min(1),
-  newSide:   z.enum(['L', 'R']),
-  newRow:    z.string().min(1),
-  newSlot:   z.string().min(1),
+  palletId:    z.string().min(1),
+  newRoom:     z.string().min(1),
+  newSide:     z.enum(['L', 'R']),
+  newRow:      z.string().min(1),
+  newSlot:     z.string().min(1),
   newPosition: z.number().int().optional(),
-  movedBy:   z.string().optional(),
+  movedBy:     z.string().optional(),
 });
 
 const editIGPSchema = z.object({
@@ -128,16 +128,19 @@ const editOGPSchema = z.object({
   })).optional(),
 });
 
-// ── Helper: format location string ────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
-function formatLocation(room: string, side: string, row: string, slot: string, position?: number | null) {
+function formatLocation(room: string, side: string, row: string, slot: string, position?: number | null): string {
   if (room === 'Ante Room') return 'Ante Room (Floor)';
   return `${room} ${side}${row}-${slot}${position ? `-P${position}` : ''}`;
 }
 
+function getUsername(req: Request): string | null {
+  return (req as any).user?.username ?? null;
+}
+
 // ── Routes ─────────────────────────────────────────────────────────────────
 
-// Preview next IGP/OGP numbers
 router.get('/next-igp', async (_req, res) => {
   try { sendSuccess(res, { number: await peekNextIGP() }); }
   catch (err) { sendServerError(res); }
@@ -149,95 +152,110 @@ router.get('/next-ogp', async (_req, res) => {
 });
 
 // ── STOCK IN (IGP) ──────────────────────────────────────────────────────────
+// Architecture: Pre-fetch all products → validate in memory → bulk insert
+// DB round trips: fixed at 4 regardless of pallet count (products, counter, pallets, movements)
+// Supports 5 pallets or 500 pallets — same performance profile
 router.post('/in', requireMinRole('operator'), validate(stockInSchema), async (req: Request, res: Response) => {
   try {
     const { header, items } = req.body;
     const now = new Date();
 
-    const result = await prisma.$transaction(async (tx) => {
-      const igpNumber        = await getNextIGP(tx);
-      const createdPallets   = [];
-      const createdMovements = [];
-
-      for (let idx = 0; idx < items.length; idx++) {
-        const item    = items[idx];
-        const product = await tx.product.findUnique({
-          where:   { id: item.productId },
-          include: { customer: true },
-        });
-        if (!product) throw new Error(`Product not found: ${item.productId}`);
-
-        const palletId    = `P-${igpNumber}-${String(idx + 1).padStart(3, '0')}`;
-        const totalWeight = item.cartons * item.weightPerCarton;
-        const location    = formatLocation(item.room, item.side, item.row, item.slot, item.position);
-
-        const pallet = await tx.pallet.create({
-          data: {
-            id:                   palletId,
-            igpNumber,
-            vehicleNo:            header.vehicleNo,
-            driverName:           header.driverName,
-            driverId:             header.driverId,
-            sealNumber:           header.sealNumber,
-            productId:            product.id,
-            customerId:           product.customer.id,
-            productName:          product.name,
-            productCode:          product.code,
-            customerName:         product.customer.name,
-            cartons:              item.cartons,
-            weightPerCarton:      item.weightPerCarton,
-            totalWeight,
-            packingType:          item.packingType,
-            mfgDate:              item.mfgDate   ? new Date(item.mfgDate)   : null,
-            expiryDate:           new Date(item.expiryDate),
-            batchNo:              item.batchNo,
-            lotNo:                item.lotNo,
-            orderRef:             header.orderRef,
-            dateIn:               now,
-            timeIn:               header.timeIn,
-            departureTime:        header.departureTime,
-            room:                 item.room,
-            side:                 item.side,
-            row:                  item.row,
-            slot:                 item.slot,
-            position:             item.position,
-            status:               'active',
-            condition:            header.condition || 'Good',
-            temperatureAtReceipt: header.temperatureAtReceipt,
-            notes:                header.notes,
-          },
-        });
-
-        const movement = await tx.stockMovement.create({
-          data: {
-            docNumber:   igpNumber,
-            type:        'IN',
-            palletId:    pallet.id,
-            customerId:  product.customer.id,
-            customerName: product.customer.name,
-            productName: product.name,
-            productCode: product.code,
-            cartons:     item.cartons,
-            totalWeight,
-            location,
-            vehicleNo:   header.vehicleNo,
-            driverName:  header.driverName,
-            driverId:    header.driverId,
-            reason:      'Receiving',
-            operatorName: header.operatorName || req.user?.username,
-            orderRef:    header.orderRef,
-          },
-        });
-
-        createdPallets.push(pallet);
-        createdMovements.push(movement);
-      }
-
-      return { igpNumber, pallets: createdPallets, movements: createdMovements };
+    // 1. Fetch all unique products in one query
+    const uniqueProductIds: string[] = [...new Set<string>(items.map((i: any) => i.productId as string))];
+    const products = await prisma.product.findMany({
+      where:   { id: { in: uniqueProductIds } },
+      include: { customer: true },
     });
+    const productMap = new Map<string, any>((products as any[]).map((p: any) => [p.id, p]));
 
-    logger.info(`IGP created: ${result.igpNumber} — ${items.length} pallets`);
-    sendCreated(res, result, `IGP ${result.igpNumber} created with ${items.length} pallets`);
+    // 2. Validate all products exist before any write
+    for (const item of items) {
+      if (!productMap.has(item.productId)) {
+        return sendError(res, `Product not found: ${item.productId}`, 404);
+      }
+    }
+
+    // 3. Get IGP number (outside transaction — safe; gap-on-failure is acceptable)
+    const igpNumber = await getNextIGP();
+
+    // 4. Build all rows in memory — zero additional DB calls
+    const palletRows:   object[] = [];
+    const movementRows: object[] = [];
+
+    for (let idx = 0; idx < items.length; idx++) {
+      const item    = items[idx];
+      const product = productMap.get(item.productId)!;
+      const palletId    = `P-${igpNumber}-${String(idx + 1).padStart(3, '0')}`;
+      const totalWeight = item.cartons * item.weightPerCarton;
+      const location    = formatLocation(item.room, item.side, item.row, item.slot, item.position);
+
+      palletRows.push({
+        id:                   palletId,
+        igpNumber,
+        vehicleNo:            header.vehicleNo,
+        driverName:           header.driverName,
+        driverId:             header.driverId             ?? null,
+        sealNumber:           header.sealNumber           ?? null,
+        productId:            product.id,
+        customerId:           product.customer.id,
+        productName:          product.name,
+        productCode:          product.code,
+        customerName:         product.customer.name,
+        cartons:              item.cartons,
+        weightPerCarton:      item.weightPerCarton,
+        totalWeight,
+        packingType:          item.packingType            ?? null,
+        mfgDate:              item.mfgDate ? new Date(item.mfgDate) : null,
+        expiryDate:           new Date(item.expiryDate),
+        batchNo:              item.batchNo                ?? null,
+        lotNo:                item.lotNo                  ?? null,
+        orderRef:             header.orderRef             ?? null,
+        dateIn:               now,
+        timeIn:               header.timeIn               ?? null,
+        departureTime:        header.departureTime        ?? null,
+        room:                 item.room,
+        side:                 item.side,
+        row:                  item.row,
+        slot:                 item.slot,
+        position:             item.position               ?? null,
+        status:               'active',
+        condition:            header.condition             ?? 'Good',
+        temperatureAtReceipt: header.temperatureAtReceipt,
+        notes:                header.notes               ?? null,
+      });
+
+      movementRows.push({
+        docNumber:    igpNumber,
+        type:         'IN',
+        palletId,
+        customerId:   product.customer.id,
+        customerName: product.customer.name,
+        productName:  product.name,
+        productCode:  product.code,
+        cartons:      item.cartons,
+        totalWeight,
+        location,
+        vehicleNo:    header.vehicleNo,
+        driverName:   header.driverName,
+        driverId:     header.driverId    ?? null,
+        reason:       'Receiving',
+        operatorName: header.operatorName ?? getUsername(req),
+        orderRef:     header.orderRef    ?? null,
+      });
+    }
+
+    // 5. Single transaction — exactly 2 bulk inserts
+    await prisma.$transaction([
+      prisma.pallet.createMany({ data: palletRows as any }),
+      prisma.stockMovement.createMany({ data: movementRows as any }),
+    ], { timeout: 60000 });
+
+    logger.info(`IGP created: ${igpNumber} — ${items.length} pallets`);
+    sendCreated(
+      res,
+      { igpNumber, palletIds: (palletRows as any[]).map((p) => (p as any).id), count: items.length },
+      `IGP ${igpNumber} created with ${items.length} pallets`
+    );
   } catch (err: any) {
     logger.error('stock.in', err);
     if (err.message?.startsWith('Product not found')) return sendError(res, err.message, 404);
@@ -246,68 +264,78 @@ router.post('/in', requireMinRole('operator'), validate(stockInSchema), async (r
 });
 
 // ── STOCK OUT (OGP) ─────────────────────────────────────────────────────────
+// Architecture: Fetch all pallets → validate → pallet updates + bulk movement insert
 router.post('/out', requireMinRole('operator'), validate(stockOutSchema), async (req: Request, res: Response) => {
   try {
     const { header, items } = req.body;
 
-    const result = await prisma.$transaction(async (tx) => {
-      const ogpNumber        = await getNextOGP(tx);
-      const createdMovements = [];
+    // 1. Fetch all pallets at once
+    const palletIds: string[] = items.map((i: any) => i.palletId as string);
+    const pallets = await prisma.pallet.findMany({ where: { id: { in: palletIds } } }) as any[];
+    const palletMap = new Map<string, any>(pallets.map((p: any) => [p.id, p]));
 
-      for (const item of items) {
-        const pallet = await tx.pallet.findUnique({ where: { id: item.palletId } });
-        if (!pallet) throw new Error(`Pallet not found: ${item.palletId}`);
-        if (pallet.status !== 'active') throw new Error(`Pallet ${item.palletId} is not active`);
-        if (item.cartonsOut > Number(pallet.cartons)) {
-          throw new Error(`Cannot dispatch ${item.cartonsOut} cartons — only ${pallet.cartons} available in pallet ${item.palletId}`);
-        }
+    // 2. Validate in memory
+    for (const item of items) {
+      const pallet = palletMap.get(item.palletId);
+      if (!pallet)                                  return sendError(res, `Pallet not found: ${item.palletId}`, 404);
+      if (pallet.status !== 'active')               return sendError(res, `Pallet ${item.palletId} is not active`, 400);
+      if (item.cartonsOut > Number(pallet.cartons)) return sendError(res, `Cannot dispatch ${item.cartonsOut} cartons — only ${pallet.cartons} available in pallet ${item.palletId}`, 400);
+    }
 
-        const remaining    = Number(pallet.cartons) - item.cartonsOut;
-        const totalWeight  = item.cartonsOut * Number(pallet.weightPerCarton);
-        const location     = formatLocation(pallet.room, pallet.side, pallet.row, pallet.slot);
+    // 3. OGP number outside transaction
+    const ogpNumber = await getNextOGP();
 
-        await tx.pallet.update({
-          where: { id: item.palletId },
-          data: {
-            cartons:     remaining,
-            totalWeight: remaining * Number(pallet.weightPerCarton),
-            status:      remaining <= 0 ? 'dispatched' : 'active',
-          },
-        });
+    // 4. Build operations in memory
+    const palletUpdates: any[]  = [];
+    const movementRows:  object[] = [];
 
-        const movement = await tx.stockMovement.create({
-          data: {
-            docNumber:   ogpNumber,
-            type:        'OUT',
-            palletId:    pallet.id,
-            customerId:  pallet.customerId,
-            customerName: pallet.customerName,
-            productName: pallet.productName,
-            productCode: pallet.productCode,
-            cartons:     item.cartonsOut,
-            totalWeight,
-            location,
-            vehicleNo:   header.vehicleNo,
-            driverName:  header.driverName,
-            driverId:    header.driverId,
-            destination: header.destination,
-            reason:      header.reason || 'Dispatch',
-            notes:       header.notes,
-            vehicleTemp: header.tempCheck || header.vehicleTemp,
-            condition:   header.condition || 'Good',
-            operatorName: header.operatorName || req.user?.username,
-            orderRef:    header.orderRef,
-          },
-        });
+    for (const item of items) {
+      const pallet      = palletMap.get(item.palletId)!;
+      const remaining   = Number(pallet.cartons) - item.cartonsOut;
+      const totalWeight = item.cartonsOut * Number(pallet.weightPerCarton);
+      const location    = formatLocation(pallet.room, pallet.side, pallet.row, pallet.slot);
 
-        createdMovements.push(movement);
-      }
+      palletUpdates.push(prisma.pallet.update({
+        where: { id: item.palletId },
+        data: {
+          cartons:     remaining,
+          totalWeight: remaining * Number(pallet.weightPerCarton),
+          status:      remaining <= 0 ? 'dispatched' : 'active',
+        },
+      }));
 
-      return { ogpNumber, movements: createdMovements };
-    });
+      movementRows.push({
+        docNumber:    ogpNumber,
+        type:         'OUT',
+        palletId:     pallet.id,
+        customerId:   pallet.customerId,
+        customerName: pallet.customerName,
+        productName:  pallet.productName,
+        productCode:  pallet.productCode,
+        cartons:      item.cartonsOut,
+        totalWeight,
+        location,
+        vehicleNo:    header.vehicleNo   ?? null,
+        driverName:   header.driverName  ?? null,
+        driverId:     header.driverId    ?? null,
+        destination:  header.destination ?? null,
+        reason:       header.reason      ?? 'Dispatch',
+        notes:        header.notes       ?? null,
+        vehicleTemp:  header.tempCheck   ?? null,
+        condition:    header.condition   ?? 'Good',
+        operatorName: header.operatorName ?? getUsername(req),
+        orderRef:     header.orderRef    ?? null,
+      });
+    }
 
-    logger.info(`OGP created: ${result.ogpNumber} — ${items.length} items dispatched`);
-    sendCreated(res, result, `OGP ${result.ogpNumber} created`);
+    // 5. Atomic transaction
+    await prisma.$transaction(
+      [...palletUpdates, prisma.stockMovement.createMany({ data: movementRows as any })],
+      { timeout: 60000 }
+    );
+
+    logger.info(`OGP created: ${ogpNumber} — ${items.length} items dispatched`);
+    sendCreated(res, { ogpNumber, count: items.length }, `OGP ${ogpNumber} created`);
   } catch (err: any) {
     logger.error('stock.out', err);
     if (err.message?.startsWith('Pallet') || err.message?.startsWith('Cannot dispatch')) {
@@ -323,22 +351,16 @@ router.post('/move', requireMinRole('operator'), validate(movePalletSchema), asy
     const { palletId, newRoom, newSide, newRow, newSlot, newPosition, movedBy } = req.body;
 
     const pallet = await prisma.pallet.findUnique({ where: { id: palletId } });
-    if (!pallet) return sendNotFound(res, 'Pallet not found');
+    if (!pallet)                    return sendNotFound(res, 'Pallet not found');
     if (pallet.status !== 'active') return sendError(res, 'Pallet is not active', 400);
 
-    // Check slot conflict
     const conflict = await prisma.pallet.findFirst({
-      where: {
-        id: { not: palletId },
-        status: 'active',
-        room: newRoom, side: newSide, row: newRow, slot: newSlot,
-      },
+      where: { id: { not: palletId }, status: 'active', room: newRoom, side: newSide, row: newRow, slot: newSlot },
     });
-    if (conflict) {
-      return sendError(res, `Slot ${newRoom} ${newSide}${newRow}-${newSlot} is already occupied by pallet ${conflict.id}`, 409);
-    }
+    if (conflict) return sendError(res, `Slot ${newRoom} ${newSide}${newRow}-${newSlot} is already occupied by pallet ${conflict.id}`, 409);
 
     const location = formatLocation(newRoom, newSide, newRow, newSlot, newPosition);
+    const operator = movedBy ?? getUsername(req);
 
     await prisma.$transaction([
       prisma.pallet.update({
@@ -347,21 +369,21 @@ router.post('/move', requireMinRole('operator'), validate(movePalletSchema), asy
       }),
       prisma.stockMovement.create({
         data: {
-          docNumber:   '-',
-          type:        'MOVE',
+          docNumber:    '-',
+          type:         'MOVE',
           palletId,
-          customerId:  pallet.customerId,
+          customerId:   pallet.customerId,
           customerName: pallet.customerName,
-          productName: pallet.productName,
-          productCode: pallet.productCode,
-          cartons:     pallet.cartons,
-          totalWeight: Number(pallet.totalWeight),
+          productName:  pallet.productName,
+          productCode:  pallet.productCode,
+          cartons:      pallet.cartons,
+          totalWeight:  Number(pallet.totalWeight),
           location,
-          reason:      `Moved by ${movedBy || req.user?.username}`,
-          operatorName: movedBy || req.user?.username,
+          reason:       `Moved by ${operator}`,
+          operatorName: operator,
         },
       }),
-    ]);
+    ], { timeout: 15000 });
 
     logger.info(`Pallet moved: ${palletId} → ${location}`);
     sendSuccess(res, { palletId, newLocation: location }, 'Pallet moved successfully');
@@ -378,43 +400,43 @@ router.put('/igp/:number', requireMinRole('supervisor'), validate(editIGPSchema)
     const pallets = await prisma.pallet.findMany({ where: { igpNumber } });
     if (pallets.length === 0) return sendNotFound(res, `IGP ${igpNumber} not found`);
 
-    await prisma.$transaction(async (tx) => {
-      for (const pallet of pallets) {
-        const itemUpdate = items.find((i: any) => i.palletId === pallet.id);
-        await tx.pallet.update({
-          where: { id: pallet.id },
-          data: {
-            vehicleNo:            header.vehicleNo            ?? pallet.vehicleNo,
-            driverName:           header.driverName           ?? pallet.driverName,
-            driverId:             header.driverId             ?? pallet.driverId,
-            sealNumber:           header.sealNumber           ?? pallet.sealNumber,
-            temperatureAtReceipt: header.temperatureAtReceipt ?? pallet.temperatureAtReceipt,
-            condition:            header.condition            ?? pallet.condition,
-            notes:                header.notes               ?? pallet.notes,
-            orderRef:             header.orderRef            ?? pallet.orderRef,
-            departureTime:        header.departureTime       ?? pallet.departureTime,
-            timeIn:               header.timeIn              ?? pallet.timeIn,
-            revised:              true,
-            revisedAt:            now,
-            ...(itemUpdate && {
-              cartons:         itemUpdate.cartons         ?? pallet.cartons,
-              weightPerCarton: itemUpdate.weightPerCarton ?? pallet.weightPerCarton,
-              totalWeight:     (itemUpdate.cartons ?? Number(pallet.cartons)) * (itemUpdate.weightPerCarton ?? Number(pallet.weightPerCarton)),
-              packingType:     itemUpdate.packingType ?? pallet.packingType,
-              mfgDate:         itemUpdate.mfgDate    ? new Date(itemUpdate.mfgDate)    : pallet.mfgDate,
-              expiryDate:      itemUpdate.expiryDate ? new Date(itemUpdate.expiryDate) : pallet.expiryDate,
-              batchNo:         itemUpdate.batchNo    ?? pallet.batchNo,
-              lotNo:           itemUpdate.lotNo      ?? pallet.lotNo,
-              productId:       itemUpdate.productId  ?? pallet.productId,
-              productName:     itemUpdate.productName ?? pallet.productName,
-              productCode:     itemUpdate.productCode ?? pallet.productCode,
-            }),
-          },
-        });
-      }
+    const palletUpdates = (pallets as any[]).map((pallet: any) => {
+      const itemUpdate = items.find((i: any) => i.palletId === pallet.id);
+      return prisma.pallet.update({
+        where: { id: pallet.id },
+        data: {
+          vehicleNo:            header.vehicleNo            ?? pallet.vehicleNo,
+          driverName:           header.driverName           ?? pallet.driverName,
+          driverId:             header.driverId             ?? pallet.driverId,
+          sealNumber:           header.sealNumber           ?? pallet.sealNumber,
+          temperatureAtReceipt: header.temperatureAtReceipt ?? pallet.temperatureAtReceipt,
+          condition:            (header.condition           ?? pallet.condition) as any,
+          notes:                header.notes               ?? pallet.notes,
+          orderRef:             header.orderRef            ?? pallet.orderRef,
+          departureTime:        header.departureTime       ?? pallet.departureTime,
+          timeIn:               header.timeIn              ?? pallet.timeIn,
+          revised:              true,
+          revisedAt:            now,
+          ...(itemUpdate && {
+            cartons:         itemUpdate.cartons         ?? pallet.cartons,
+            weightPerCarton: itemUpdate.weightPerCarton ?? pallet.weightPerCarton,
+            totalWeight:     (itemUpdate.cartons ?? Number(pallet.cartons)) * (itemUpdate.weightPerCarton ?? Number(pallet.weightPerCarton)),
+            packingType:     itemUpdate.packingType ?? pallet.packingType,
+            mfgDate:         itemUpdate.mfgDate    ? new Date(itemUpdate.mfgDate)    : pallet.mfgDate,
+            expiryDate:      itemUpdate.expiryDate ? new Date(itemUpdate.expiryDate) : pallet.expiryDate,
+            batchNo:         itemUpdate.batchNo    ?? pallet.batchNo,
+            lotNo:           itemUpdate.lotNo      ?? pallet.lotNo,
+            productId:       itemUpdate.productId  ?? pallet.productId,
+            productName:     itemUpdate.productName ?? pallet.productName,
+            productCode:     itemUpdate.productCode ?? pallet.productCode,
+          }),
+        },
+      });
+    });
 
-      // Update IN movements
-      await tx.stockMovement.updateMany({
+    await prisma.$transaction([
+      ...palletUpdates,
+      prisma.stockMovement.updateMany({
         where: { docNumber: igpNumber, type: 'IN' },
         data: {
           vehicleNo:  header.vehicleNo  ?? undefined,
@@ -423,8 +445,8 @@ router.put('/igp/:number', requireMinRole('supervisor'), validate(editIGPSchema)
           revised:    true,
           revisedAt:  now,
         },
-      });
-    });
+      }),
+    ], { timeout: 60000 });
 
     sendSuccess(res, { igpNumber }, `IGP ${igpNumber} updated`);
   } catch (err) { logger.error('stock.editIGP', err); sendServerError(res); }
@@ -440,58 +462,64 @@ router.put('/ogp/:number', requireMinRole('supervisor'), validate(editOGPSchema)
     const movements = await prisma.stockMovement.findMany({ where: { docNumber: ogpNumber, type: 'OUT' } });
     if (movements.length === 0) return sendNotFound(res, `OGP ${ogpNumber} not found`);
 
-    await prisma.$transaction(async (tx) => {
-      // Update movements
-      for (const mov of movements) {
-        const lineUpdate = lines?.find((l: any) => l.movementId === mov.id);
-        const newCartons = lineUpdate?.newCartons ?? mov.cartons;
-        const wt         = lineUpdate?.weightPerCarton ?? (Number(mov.totalWeight) / (mov.cartons || 1));
+    // Pre-fetch pallets for qty-change lines
+    const palletIdsToFetch: string[] = (lines ?? []).map((l: any) => l.palletId as string).filter(Boolean);
+    const fetchedPallets = palletIdsToFetch.length
+      ? await prisma.pallet.findMany({ where: { id: { in: palletIdsToFetch } } })
+      : [];
+    const palletMap = new Map<string, any>((fetchedPallets as any[]).map((p: any) => [p.id, p]));
 
-        await tx.stockMovement.update({
-          where: { id: mov.id },
+    const movementUpdates = (movements as any[]).map((mov: any) => {
+      const lineUpdate = (lines ?? []).find((l: any) => l.movementId === mov.id);
+      const newCartons = lineUpdate?.newCartons ?? mov.cartons;
+      const wt         = lineUpdate?.weightPerCarton ?? (Number(mov.totalWeight) / (mov.cartons || 1));
+      return prisma.stockMovement.update({
+        where: { id: mov.id },
+        data: {
+          vehicleNo:   header.vehicleNo   ?? mov.vehicleNo,
+          driverName:  header.driverName  ?? mov.driverName,
+          driverId:    header.driverId    ?? mov.driverId,
+          destination: header.destination ?? mov.destination,
+          reason:      header.reason      ?? mov.reason,
+          notes:       header.notes       ?? mov.notes,
+          orderRef:    header.orderRef    ?? mov.orderRef,
+          vehicleTemp: header.vehicleTemp ?? (mov as any).vehicleTemp,
+          condition:   header.condition   ?? (mov as any).condition,
+          cartons:     newCartons,
+          totalWeight: newCartons * wt,
+          ...(lineUpdate?.productName && { productName: lineUpdate.productName }),
+          ...(lineUpdate?.productCode && { productCode: lineUpdate.productCode }),
+          revised:   true,
+          revisedAt: now,
+        },
+      });
+    });
+
+    const palletUpdates = (lines ?? [])
+      .filter((l: any) => l.newCartons !== undefined)
+      .map((l: any) => {
+        const pallet = palletMap.get(l.palletId);
+        if (!pallet) return null;
+        const oldMov    = (movements as any[]).find((m: any) => m.palletId === l.palletId && m.type === 'OUT');
+        const oldQty    = oldMov?.cartons ?? 0;
+        const remaining = Math.max(0, Number(pallet.cartons) + oldQty - l.newCartons);
+        return prisma.pallet.update({
+          where: { id: pallet.id },
           data: {
-            vehicleNo:   header.vehicleNo   ?? mov.vehicleNo,
-            driverName:  header.driverName  ?? mov.driverName,
-            driverId:    header.driverId    ?? mov.driverId,
-            destination: header.destination ?? mov.destination,
-            reason:      header.reason      ?? mov.reason,
-            notes:       header.notes       ?? mov.notes,
-            orderRef:    header.orderRef    ?? mov.orderRef,
-            vehicleTemp: header.vehicleTemp ?? (mov as any).vehicleTemp,
-            condition:   header.condition   ?? (mov as any).condition,
-            cartons:     newCartons,
-            totalWeight: newCartons * wt,
-            ...(lineUpdate?.productName && { productName: lineUpdate.productName }),
-            ...(lineUpdate?.productCode && { productCode: lineUpdate.productCode }),
+            cartons:     remaining,
+            totalWeight: remaining * Number(pallet.weightPerCarton),
+            status:      remaining <= 0 ? 'dispatched' : 'active',
+            ...(l.productName && { productName: l.productName }),
+            ...(l.productCode && { productCode: l.productCode }),
+            ...(l.productId   && { productId:   l.productId }),
             revised:   true,
             revisedAt: now,
           },
         });
+      })
+      .filter((op: any) => op !== null);
 
-        // Update pallet remaining cartons if qty changed
-        if (lineUpdate && lineUpdate.newCartons !== mov.cartons) {
-          const pallet = await tx.pallet.findUnique({ where: { id: mov.palletId } });
-          if (pallet) {
-            const oldQty  = mov.cartons;
-            const newQty  = lineUpdate.newCartons;
-            const remaining = Math.max(0, Number(pallet.cartons) + oldQty - newQty);
-            await tx.pallet.update({
-              where: { id: pallet.id },
-              data: {
-                cartons:     remaining,
-                totalWeight: remaining * Number(pallet.weightPerCarton),
-                status:      remaining <= 0 ? 'dispatched' : 'active',
-                ...(lineUpdate.productName && { productName: lineUpdate.productName }),
-                ...(lineUpdate.productCode && { productCode: lineUpdate.productCode }),
-                ...(lineUpdate.productId   && { productId:   lineUpdate.productId }),
-                revised:   true,
-                revisedAt: now,
-              },
-            });
-          }
-        }
-      }
-    });
+    await prisma.$transaction([...movementUpdates, ...palletUpdates], { timeout: 60000 });
 
     sendSuccess(res, { ogpNumber }, `OGP ${ogpNumber} updated`);
   } catch (err) { logger.error('stock.editOGP', err); sendServerError(res); }
