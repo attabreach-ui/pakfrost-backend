@@ -11,7 +11,7 @@ const router = Router();
 // Strict rate limit on login only
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max:      env.LOGIN_RATE_LIMIT_MAX,
+  max:      env?.LOGIN_RATE_LIMIT_MAX ?? 10,
   message:  { success: false, message: 'Too many login attempts. Try again after 15 minutes.' },
   standardHeaders: true,
   legacyHeaders:   false,

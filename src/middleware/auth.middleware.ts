@@ -26,7 +26,7 @@ export const authenticate = (req: Request, res: Response, next: NextFunction): v
     }
 
     const token = authHeader.split(' ')[1];
-    const payload = jwt.verify(token, env.JWT_ACCESS_SECRET) as JwtPayload;
+    const payload = jwt.verify(token, env?.JWT_ACCESS_SECRET ?? '') as JwtPayload;
     req.user = payload;
     next();
   } catch (err) {
