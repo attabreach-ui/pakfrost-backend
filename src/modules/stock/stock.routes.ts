@@ -163,6 +163,8 @@ router.get('/counters', async (_req, res) => {
       ogpSeq: counter?.ogpSeq ?? 0,
       igpInitialized: Boolean(counter),
       ogpInitialized: Boolean(counter),
+      nextIGP: await peekNextIGP(),
+      nextOGP: await peekNextOGP(),
     });
   } catch (err) { sendServerError(res); }
 });
@@ -183,6 +185,8 @@ router.put('/counters', requireMinRole('admin'), async (req: Request, res: Respo
       ...counter,
       igpInitialized: true,
       ogpInitialized: true,
+      nextIGP: await peekNextIGP(),
+      nextOGP: await peekNextOGP(),
     }, 'Counters updated');
   } catch (err) { sendServerError(res); }
 });
