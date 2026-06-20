@@ -32,7 +32,7 @@ async function main() {
   console.log('✅ Seed complete!');
   console.log('\n  Login with:');
   console.log('  username: admin');
-  console.log('  password: admin123');
+  console.log('  password: Admin@123');
   console.log('\n  ⚠ Change the password immediately after first login!\n');
 }
 

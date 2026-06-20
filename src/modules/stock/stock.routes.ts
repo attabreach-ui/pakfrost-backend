@@ -4,7 +4,14 @@ import prisma from '../../config/database';
 import { authenticate } from '../../middleware/auth.middleware';
 import { requireMinRole } from '../../middleware/rbac.middleware';
 import { validate } from '../../middleware/validate.middleware';
-import { getNextIGP, getNextOGP, peekNextIGP, peekNextOGP } from '../../utils/docCounter';
+import {
+  getDocCounters,
+  getNextIGP,
+  getNextOGP,
+  peekNextIGP,
+  peekNextOGP,
+  setDocCounters,
+} from '../../utils/docCounter';
 import { sendSuccess, sendCreated, sendNotFound, sendError, sendServerError } from '../../utils/response';
 import { logger } from '../../utils/logger';
 
@@ -128,6 +135,11 @@ const editOGPSchema = z.object({
   })).optional(),
 });
 
+const countersSchema = z.object({
+  igpSeq: z.number().int().min(0),
+  ogpSeq: z.number().int().min(0),
+});
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatLocation(room: string, side: string, row: string, slot: string, position?: number | null): string {
@@ -149,6 +161,34 @@ router.get('/next-igp', async (_req, res) => {
 router.get('/next-ogp', async (_req, res) => {
   try { sendSuccess(res, { number: await peekNextOGP() }); }
   catch (err) { sendServerError(res); }
+});
+
+router.get('/counters', async (_req, res) => {
+  try {
+    const counters = await getDocCounters();
+    sendSuccess(res, {
+      ...counters,
+      nextIGP: await peekNextIGP(),
+      nextOGP: await peekNextOGP(),
+    });
+  } catch (err) {
+    logger.error('stock.counters.get', err);
+    sendServerError(res);
+  }
+});
+
+router.put('/counters', requireMinRole('admin'), validate(countersSchema), async (req: Request, res: Response) => {
+  try {
+    const counters = await setDocCounters(req.body.igpSeq, req.body.ogpSeq);
+    sendSuccess(res, {
+      ...counters,
+      nextIGP: await peekNextIGP(),
+      nextOGP: await peekNextOGP(),
+    }, 'Document counters updated');
+  } catch (err) {
+    logger.error('stock.counters.update', err);
+    sendServerError(res);
+  }
 });
 
 // ── STOCK IN (IGP) ──────────────────────────────────────────────────────────

@@ -107,6 +107,12 @@ export async function getMe(userId: string): Promise<AuthUser | null> {
   return safeUser;
 }
 
+export async function verifyPassword(userId: string, password: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user || !user.isActive) return false;
+  return bcrypt.compare(password, user.passwordHash);
+}
+
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, 12);
 }

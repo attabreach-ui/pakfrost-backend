@@ -3,7 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { env } from '../../config/env';
 import { authenticate } from '../../middleware/auth.middleware';
 import { validate } from '../../middleware/validate.middleware';
-import { loginSchema, refreshSchema } from './auth.schema';
+import { loginSchema, refreshSchema, verifyPasswordSchema } from './auth.schema';
 import * as authController from './auth.controller';
 
 const router = Router();
@@ -24,5 +24,6 @@ router.post('/refresh', validate(refreshSchema),                authController.r
 // Protected routes (auth required)
 router.post('/logout', authenticate, authController.logout);
 router.get( '/me',     authenticate, authController.me);
+router.post('/verify-password', authenticate, validate(verifyPasswordSchema), authController.verifyPassword);
 
 export default router;

@@ -36,3 +36,46 @@ export async function peekNextOGP(): Promise<string> {
   const next = (counter?.ogpSeq ?? 0) + 1;
   return `OGP-${String(next).padStart(4, '0')}`;
 }
+
+export async function getDocCounters() {
+  const counter = await prisma.docCounter.findUnique({ where: { id: 'main' } });
+  const year = new Date().getFullYear();
+
+  return {
+    igpYear: counter?.igpYear ?? year,
+    igpSeq: counter?.igpSeq ?? 0,
+    ogpYear: counter?.ogpYear ?? year,
+    ogpSeq: counter?.ogpSeq ?? 0,
+    igpInitialized: Boolean(counter),
+    ogpInitialized: Boolean(counter),
+  };
+}
+
+export async function setDocCounters(igpSeq: number, ogpSeq: number) {
+  const year = new Date().getFullYear();
+  const counter = await prisma.docCounter.upsert({
+    where: { id: 'main' },
+    create: {
+      id: 'main',
+      igpSeq,
+      ogpSeq,
+      igpYear: year,
+      ogpYear: year,
+    },
+    update: {
+      igpSeq,
+      ogpSeq,
+      igpYear: year,
+      ogpYear: year,
+    },
+  });
+
+  return {
+    igpYear: counter.igpYear,
+    igpSeq: counter.igpSeq,
+    ogpYear: counter.ogpYear,
+    ogpSeq: counter.ogpSeq,
+    igpInitialized: true,
+    ogpInitialized: true,
+  };
+}

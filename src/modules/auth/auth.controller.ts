@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import * as authService from './auth.service';
 import {
-  sendSuccess, sendCreated, sendUnauthorized, sendServerError
+  sendSuccess, sendError, sendUnauthorized, sendServerError
 } from '../../utils/response';
 import { logger } from '../../utils/logger';
 
@@ -60,6 +60,20 @@ export async function me(req: Request, res: Response): Promise<void> {
     sendSuccess(res, user, 'User fetched');
   } catch (err) {
     logger.error('Me error', err);
+    sendServerError(res);
+  }
+}
+
+export async function verifyPassword(req: Request, res: Response): Promise<void> {
+  try {
+    const ok = await authService.verifyPassword(req.user!.userId, req.body.password);
+    if (!ok) {
+      sendError(res, 'Incorrect password', 400);
+      return;
+    }
+    sendSuccess(res, { verified: true }, 'Password verified');
+  } catch (err) {
+    logger.error('Verify password error', err);
     sendServerError(res);
   }
 }

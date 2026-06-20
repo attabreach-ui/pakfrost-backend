@@ -19,6 +19,7 @@ import palletsRoutes     from './modules/pallets/pallets.routes';
 import movementsRoutes   from './modules/movements/movements.routes';
 import temperatureRoutes from './modules/temperature/temperature.routes';
 import reportsRoutes     from './modules/reports/reports.routes';
+import adminRoutes       from './modules/admin/admin.routes';
 
 const app = express();
 const port = env?.PORT ?? 3001;
@@ -76,6 +77,7 @@ app.use(`${API}/pallets`,     palletsRoutes);
 app.use(`${API}/movements`,   movementsRoutes);
 app.use(`${API}/temperature`, temperatureRoutes);
 app.use(`${API}/reports`,     reportsRoutes);
+app.use(`${API}/admin`,       adminRoutes);
 
 // ── 404 handler ─────────────────────────────────────────────────────────────
 app.use((_req: Request, res: Response) => {
