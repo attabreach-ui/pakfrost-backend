@@ -155,9 +155,14 @@ router.get('/next-ogp', async (_req, res) => {
 router.get('/counters', async (_req, res) => {
   try {
     const counter = await prisma.docCounter.findUnique({ where: { id: 'main' } });
+    const year = new Date().getFullYear();
     sendSuccess(res, {
+      igpYear: counter?.igpYear ?? year,
       igpSeq: counter?.igpSeq ?? 0,
+      ogpYear: counter?.ogpYear ?? year,
       ogpSeq: counter?.ogpSeq ?? 0,
+      igpInitialized: Boolean(counter),
+      ogpInitialized: Boolean(counter),
     });
   } catch (err) { sendServerError(res); }
 });
@@ -165,15 +170,20 @@ router.get('/counters', async (_req, res) => {
 router.put('/counters', requireMinRole('admin'), async (req: Request, res: Response) => {
   try {
     const { igpSeq, ogpSeq } = req.body;
+    const year = new Date().getFullYear();
     const counter = await prisma.docCounter.upsert({
       where:  { id: 'main' },
-      create: { id: 'main', igpSeq: igpSeq ?? 1, ogpSeq: ogpSeq ?? 1 },
+      create: { id: 'main', igpSeq: igpSeq ?? 1, ogpSeq: ogpSeq ?? 1, igpYear: year, ogpYear: year },
       update: {
         ...(igpSeq !== undefined && { igpSeq }),
         ...(ogpSeq !== undefined && { ogpSeq }),
       },
     });
-    sendSuccess(res, counter, 'Counters updated');
+    sendSuccess(res, {
+      ...counter,
+      igpInitialized: true,
+      ogpInitialized: true,
+    }, 'Counters updated');
   } catch (err) { sendServerError(res); }
 });
 
