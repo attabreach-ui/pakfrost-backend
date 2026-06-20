@@ -151,16 +151,38 @@ router.get('/next-ogp', async (_req, res) => {
   catch (err) { sendServerError(res); }
 });
 
+// ── COUNTERS ─────────────────────────────────────────────────────────────────
+router.get('/counters', async (_req, res) => {
+  try {
+    const counter = await prisma.docCounter.findUnique({ where: { id: 'main' } });
+    sendSuccess(res, {
+      igpSeq: counter?.igpSeq ?? 0,
+      ogpSeq: counter?.ogpSeq ?? 0,
+    });
+  } catch (err) { sendServerError(res); }
+});
+
+router.put('/counters', requireMinRole('admin'), async (req: Request, res: Response) => {
+  try {
+    const { igpSeq, ogpSeq } = req.body;
+    const counter = await prisma.docCounter.upsert({
+      where:  { id: 'main' },
+      create: { id: 'main', igpSeq: igpSeq ?? 1, ogpSeq: ogpSeq ?? 1 },
+      update: {
+        ...(igpSeq !== undefined && { igpSeq }),
+        ...(ogpSeq !== undefined && { ogpSeq }),
+      },
+    });
+    sendSuccess(res, counter, 'Counters updated');
+  } catch (err) { sendServerError(res); }
+});
+
 // ── STOCK IN (IGP) ──────────────────────────────────────────────────────────
-// Architecture: Pre-fetch all products → validate in memory → bulk insert
-// DB round trips: fixed at 4 regardless of pallet count (products, counter, pallets, movements)
-// Supports 5 pallets or 500 pallets — same performance profile
 router.post('/in', requireMinRole('operator'), validate(stockInSchema), async (req: Request, res: Response) => {
   try {
     const { header, items } = req.body;
     const now = new Date();
 
-    // 1. Fetch all unique products in one query
     const uniqueProductIds: string[] = [...new Set<string>(items.map((i: any) => i.productId as string))];
     const products = await prisma.product.findMany({
       where:   { id: { in: uniqueProductIds } },
@@ -168,17 +190,14 @@ router.post('/in', requireMinRole('operator'), validate(stockInSchema), async (r
     });
     const productMap = new Map<string, any>((products as any[]).map((p: any) => [p.id, p]));
 
-    // 2. Validate all products exist before any write
     for (const item of items) {
       if (!productMap.has(item.productId)) {
         return sendError(res, `Product not found: ${item.productId}`, 404);
       }
     }
 
-    // 3. Get IGP number (outside transaction — safe; gap-on-failure is acceptable)
     const igpNumber = await getNextIGP();
 
-    // 4. Build all rows in memory — zero additional DB calls
     const palletRows:   object[] = [];
     const movementRows: object[] = [];
 
@@ -187,7 +206,7 @@ router.post('/in', requireMinRole('operator'), validate(stockInSchema), async (r
       const product = productMap.get(item.productId)!;
       const palletId    = `P-${igpNumber}-${String(idx + 1).padStart(3, '0')}`;
       const totalWeight = item.cartons * item.weightPerCarton;
-      const location    = formatLocation(item.room, item.side, item.row, item.slot, item.position);
+      const location    = formatLocation(item.room, item.side ?? 'L', item.row ?? '', item.slot ?? '', item.position);
 
       palletRows.push({
         id:                   palletId,
@@ -214,9 +233,9 @@ router.post('/in', requireMinRole('operator'), validate(stockInSchema), async (r
         timeIn:               header.timeIn               ?? null,
         departureTime:        header.departureTime        ?? null,
         room:                 item.room,
-        side:                 item.side,
-        row:                  item.row,
-        slot:                 item.slot,
+        side:                 item.side                   ?? 'L',
+        row:                  item.row                    ?? '',
+        slot:                 item.slot                   ?? '',
         position:             item.position               ?? null,
         status:               'active',
         condition:            header.condition             ?? 'Good',
@@ -244,7 +263,6 @@ router.post('/in', requireMinRole('operator'), validate(stockInSchema), async (r
       });
     }
 
-    // 5. Single transaction — exactly 2 bulk inserts
     await prisma.$transaction([
       prisma.pallet.createMany({ data: palletRows as any }),
       prisma.stockMovement.createMany({ data: movementRows as any }),
@@ -264,17 +282,14 @@ router.post('/in', requireMinRole('operator'), validate(stockInSchema), async (r
 });
 
 // ── STOCK OUT (OGP) ─────────────────────────────────────────────────────────
-// Architecture: Fetch all pallets → validate → pallet updates + bulk movement insert
 router.post('/out', requireMinRole('operator'), validate(stockOutSchema), async (req: Request, res: Response) => {
   try {
     const { header, items } = req.body;
 
-    // 1. Fetch all pallets at once
     const palletIds: string[] = items.map((i: any) => i.palletId as string);
     const pallets = await prisma.pallet.findMany({ where: { id: { in: palletIds } } }) as any[];
     const palletMap = new Map<string, any>(pallets.map((p: any) => [p.id, p]));
 
-    // 2. Validate in memory
     for (const item of items) {
       const pallet = palletMap.get(item.palletId);
       if (!pallet)                                  return sendError(res, `Pallet not found: ${item.palletId}`, 404);
@@ -282,10 +297,8 @@ router.post('/out', requireMinRole('operator'), validate(stockOutSchema), async 
       if (item.cartonsOut > Number(pallet.cartons)) return sendError(res, `Cannot dispatch ${item.cartonsOut} cartons — only ${pallet.cartons} available in pallet ${item.palletId}`, 400);
     }
 
-    // 3. OGP number outside transaction
     const ogpNumber = await getNextOGP();
 
-    // 4. Build operations in memory
     const palletUpdates: any[]  = [];
     const movementRows:  object[] = [];
 
@@ -293,7 +306,7 @@ router.post('/out', requireMinRole('operator'), validate(stockOutSchema), async 
       const pallet      = palletMap.get(item.palletId)!;
       const remaining   = Number(pallet.cartons) - item.cartonsOut;
       const totalWeight = item.cartonsOut * Number(pallet.weightPerCarton);
-      const location    = formatLocation(pallet.room, pallet.side, pallet.row, pallet.slot);
+      const location    = formatLocation(pallet.room, pallet.side ?? 'L', pallet.row ?? '', pallet.slot ?? '');
 
       palletUpdates.push(prisma.pallet.update({
         where: { id: item.palletId },
@@ -328,7 +341,6 @@ router.post('/out', requireMinRole('operator'), validate(stockOutSchema), async 
       });
     }
 
-    // 5. Atomic transaction
     await prisma.$transaction(
       [...palletUpdates, prisma.stockMovement.createMany({ data: movementRows as any })]
     );
@@ -358,13 +370,13 @@ router.post('/move', requireMinRole('operator'), validate(movePalletSchema), asy
     });
     if (conflict) return sendError(res, `Slot ${newRoom} ${newSide}${newRow}-${newSlot} is already occupied by pallet ${conflict.id}`, 409);
 
-    const location = formatLocation(newRoom, newSide, newRow, newSlot, newPosition);
+    const location = formatLocation(newRoom, newSide ?? 'L', newRow ?? '', newSlot ?? '', newPosition);
     const operator = movedBy ?? getUsername(req);
 
     await prisma.$transaction([
       prisma.pallet.update({
         where: { id: palletId },
-        data:  { room: newRoom, side: newSide, row: newRow, slot: newSlot, position: newPosition },
+        data:  { room: newRoom, side: newSide ?? 'L', row: newRow ?? '', slot: newSlot ?? '', position: newPosition },
       }),
       prisma.stockMovement.create({
         data: {
@@ -461,7 +473,6 @@ router.put('/ogp/:number', requireMinRole('supervisor'), validate(editOGPSchema)
     const movements = await prisma.stockMovement.findMany({ where: { docNumber: ogpNumber, type: 'OUT' } });
     if (movements.length === 0) return sendNotFound(res, `OGP ${ogpNumber} not found`);
 
-    // Pre-fetch pallets for qty-change lines
     const palletIdsToFetch: string[] = (lines ?? []).map((l: any) => l.palletId as string).filter(Boolean);
     const fetchedPallets = palletIdsToFetch.length
       ? await prisma.pallet.findMany({ where: { id: { in: palletIdsToFetch } } })
