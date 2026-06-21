@@ -12,10 +12,10 @@ const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
 const createSchema = z.object({
   name:          z.string().min(1).max(100).trim(),
   code:          z.string().min(1).max(20).trim().toUpperCase(),
-  cnic:          z.string().min(1).max(20).trim(),
-  phone:         z.string().min(1).max(20).trim(),
-  licenseNo:     z.string().min(1).max(30).trim(),
-  licenseExpiry: z.string().regex(dateRegex, 'Use YYYY-MM-DD format'),
+  cnic:          z.string().max(20).trim().optional().default(''),
+  phone:         z.string().max(20).trim().optional().default(''),
+  licenseNo:     z.string().max(30).trim().optional().default(''),
+  licenseExpiry: z.string().regex(dateRegex, 'Use YYYY-MM-DD format').optional(),
   joiningDate:   z.string().regex(dateRegex, 'Use YYYY-MM-DD format').optional(),
   status:        z.enum(['active', 'inactive']).default('active'),
 });
@@ -58,7 +58,7 @@ router.post('/', requireMinRole('supervisor'), validate(createSchema), async (re
   try {
     const data = await prisma.driver.create({ data: {
       ...req.body,
-      licenseExpiry: new Date(req.body.licenseExpiry),
+      licenseExpiry: req.body.licenseExpiry ? new Date(req.body.licenseExpiry) : new Date('2099-12-31'),
       joiningDate:   req.body.joiningDate ? new Date(req.body.joiningDate) : undefined,
     }});
     logger.info(`Driver created: ${data.name}`);
