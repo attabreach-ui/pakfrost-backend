@@ -75,7 +75,7 @@ router.get('/ogp/:number', async (req: Request, res: Response) => {
     const movements = await prisma.stockMovement.findMany({
       where:   { docNumber: ogpNumber, type: 'OUT' },
       orderBy: { createdAt: 'asc' },
-      include: { pallet: { select: { room: true, side: true, row: true, slot: true, weightPerCarton: true } } },
+      include: { pallet: { select: { room: true, side: true, row: true, slot: true, weightPerCarton: true, expiryDate: true } } },
     });
     if (movements.length === 0) return sendNotFound(res, `OGP ${ogpNumber} not found`);
     sendSuccess(res, { ogpNumber, movements });
