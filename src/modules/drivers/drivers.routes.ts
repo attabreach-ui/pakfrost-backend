@@ -15,7 +15,7 @@ const createSchema = z.object({
   cnic:          z.string().max(20).trim().optional().default(''),
   phone:         z.string().max(20).trim().optional().default(''),
   licenseNo:     z.string().max(30).trim().optional().default(''),
-  licenseExpiry: z.string().regex(dateRegex, 'Use YYYY-MM-DD format').optional(),
+  licenseExpiry: z.string().regex(dateRegex, 'Use YYYY-MM-DD format').optional().or(z.literal('')),
   joiningDate:   z.string().regex(dateRegex, 'Use YYYY-MM-DD format').optional(),
   status:        z.enum(['active', 'inactive']).default('active'),
 });
