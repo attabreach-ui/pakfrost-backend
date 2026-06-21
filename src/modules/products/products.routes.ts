@@ -12,7 +12,7 @@ const createSchema = z.object({
   customerId:      z.string().uuid('Invalid customer ID'),
   name:            z.string().min(1).max(100).trim(),
   code:            z.string().min(1).max(30).trim().toUpperCase(),
-  category:        z.string().min(1).max(50).trim(),
+  category:        z.string().max(50).trim().optional().default(''),
   cartonsPerPallet: z.number().int().min(0).default(0),
   weightPerCarton: z.number().positive('Weight must be positive'),
   uom:             z.enum(['Kg', 'Lbs']).default('Kg'),
