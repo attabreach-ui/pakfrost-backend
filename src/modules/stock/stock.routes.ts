@@ -380,9 +380,9 @@ router.post('/move', requireMinRole('operator'), validate(movePalletSchema), asy
     if (pallet.status !== 'active') return sendError(res, 'Pallet is not active', 400);
 
     const conflict = await prisma.pallet.findFirst({
-      where: { id: { not: palletId }, status: 'active', room: newRoom, side: newSide, row: newRow, slot: newSlot },
+      where: { id: { not: palletId }, status: 'active', room: newRoom, side: newSide, row: newRow, slot: newSlot, position: newPosition },
     });
-    if (conflict) return sendError(res, `Slot ${newRoom} ${newSide}${newRow}-${newSlot} is already occupied by pallet ${conflict.id}`, 409);
+    if (conflict) return sendError(res, `Position P-${newPosition} in ${newRoom} ${newSide}${newRow}-${newSlot} is already occupied by pallet ${conflict.id}`, 409);
 
     const location = formatLocation(newRoom, newSide ?? 'L', newRow ?? '', newSlot ?? '', newPosition);
     const operator = movedBy ?? getUsername(req);
