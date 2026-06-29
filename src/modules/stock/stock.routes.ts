@@ -518,6 +518,7 @@ router.put('/igp/:number', requireMinRole('supervisor'), validate(editIGPSchema)
     });
 
     // Also update IN movements to match pallet changes
+    const movements = await prisma.stockMovement.findMany({ where: { docNumber: igpNumber, type: 'IN' } });
     const movementUpdates = (movements as any[]).map((mov: any) => {
       const itemUpdate = items.find((i: any) => i.palletId === mov.palletId);
       return prisma.stockMovement.update({

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate } from '../../middleware/auth.middleware';
-import { requireRole } from '../../middleware/rbac.middleware';
+import { requireRole, requireMinRole } from '../../middleware/rbac.middleware';
 import { validate } from '../../middleware/validate.middleware';
 import { createUserSchema, updateUserSchema, changePasswordSchema, adminSetPasswordSchema } from './users.schema';
 import * as usersController from './users.controller';
