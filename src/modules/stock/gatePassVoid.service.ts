@@ -78,16 +78,16 @@ function serializeMovement(m: any) {
 export async function getDocStatus(docNumber: string, docType: 'IN' | 'OUT') {
   const movements = await prisma.stockMovement.findMany({
     where: { docNumber, type: docType },
-    take: 1,
   });
   if (movements.length === 0) {
     return { status: 'not_found' as const, canVoid: false, canRestore: false, blockReason: 'Document not found' };
   }
 
-  const status = movements[0].status;
+  const allVoided = movements.every(m => m.status === 'voided');
+  const anyVoided = movements.some(m => m.status === 'voided');
   const snapshot = await prisma.gatePassSnapshot.findUnique({ where: { docNumber } });
 
-  if (status === 'voided') {
+  if (allVoided) {
     return {
       status: 'voided' as const,
       canVoid: false,
@@ -99,15 +99,31 @@ export async function getDocStatus(docNumber: string, docType: 'IN' | 'OUT') {
     };
   }
 
+  // If any movement is voided but not all, the document is in an inconsistent state
+  if (anyVoided) {
+    return {
+      status: 'partial' as const,
+      canVoid: false,
+      canRestore: false,
+      blockReason: 'Document is in an inconsistent state — contact admin',
+    };
+  }
+
   if (docType === 'IN') {
     const pallets = await prisma.pallet.findMany({ where: { igpNumber: docNumber } });
+    if (pallets.length === 0) {
+      return {
+        status: 'active' as const,
+        canVoid: false,
+        canRestore: false,
+        blockReason: 'IGP has no pallets — cannot undo',
+      };
+    }
     const palletIds = pallets.map(p => p.id);
-    const activeOuts = palletIds.length
-      ? await prisma.stockMovement.findMany({
-          where: { palletId: { in: palletIds }, type: 'OUT', status: 'active' },
-          select: { docNumber: true },
-        })
-      : [];
+    const activeOuts = await prisma.stockMovement.findMany({
+      where: { palletId: { in: palletIds }, type: 'OUT', status: 'active' },
+      select: { docNumber: true },
+    });
     if (activeOuts.length > 0) {
       const ogpNums = [...new Set(activeOuts.map(m => m.docNumber))];
       return {
