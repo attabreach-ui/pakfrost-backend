@@ -25,11 +25,11 @@ export const errorHandler = (
         sendError(res, 'Related record not found (foreign key constraint)', 400);
         return;
       default:
-        sendError(res, `Database error: ${prismaErr.code}`, 400);
+        sendServerError(res, `Database error: ${prismaErr.code}`);
         return;
     }
   }
 
-  // Generic server error
-  sendServerError(res, err.message || 'Something went wrong');
+  // Generic server error — never leak raw messages to client
+  sendServerError(res);
 };

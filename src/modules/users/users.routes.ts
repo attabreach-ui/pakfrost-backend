@@ -15,7 +15,7 @@ router.put('/:id', requireRole('admin'), validate(updateUserSchema),        user
 router.delete('/:id', requireRole('admin'),                                 usersController.remove);
 
 // Password — self or admin
-router.put('/:id/password',       validate(changePasswordSchema),  usersController.changePassword);
+router.put('/:id/password', requireMinRole('supervisor'), validate(changePasswordSchema), usersController.changePassword);
 router.put('/:id/password/reset', requireRole('admin'), validate(adminSetPasswordSchema), usersController.adminSetPassword);
 
 export default router;

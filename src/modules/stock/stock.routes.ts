@@ -230,6 +230,23 @@ router.post('/in', requireMinRole('operator'), validate(stockInSchema), async (r
       const totalWeight = item.cartons * item.weightPerCarton;
       const location    = formatLocation(item.room, item.side ?? 'L', item.row ?? '', item.slot ?? '', item.position);
 
+      // Check location conflict (skip Ante Room)
+      if (item.room !== 'Ante Room') {
+        const conflict = await prisma.pallet.findFirst({
+          where: {
+            status: 'active',
+            room: item.room,
+            side: item.side ?? 'L',
+            row: item.row ?? '',
+            slot: item.slot ?? '',
+            position: item.position ?? null,
+          },
+        });
+        if (conflict) {
+          return sendError(res, `Location ${location} is already occupied by pallet ${conflict.id}`, 409);
+        }
+      }
+
       palletRows.push({
         id:                   palletId,
         igpNumber,
@@ -307,6 +324,13 @@ router.post('/in', requireMinRole('operator'), validate(stockInSchema), async (r
 router.post('/out', requireMinRole('operator'), validate(stockOutSchema), async (req: Request, res: Response) => {
   try {
     const { header, items } = req.body;
+    const now = new Date();
+
+    // Validate: no duplicate palletId in items
+    const uniquePalletIds = new Set(items.map((i: any) => i.palletId as string));
+    if (uniquePalletIds.size !== items.length) {
+      return sendError(res, 'Duplicate palletId in items — each pallet can only be dispatched once per OGP', 400);
+    }
 
     const palletIds: string[] = items.map((i: any) => i.palletId as string);
     const pallets = await prisma.pallet.findMany({ where: { id: { in: palletIds } } }) as any[];
@@ -443,8 +467,24 @@ router.put('/igp/:number', requireMinRole('supervisor'), validate(editIGPSchema)
       return sendError(res, 'Cannot edit a voided IGP — use Redo (Restore) first', 400);
     }
 
+    // Block: if any pallet has active OUT movements, editing is not allowed
+    const palletIds = pallets.map(p => p.id);
+    const activeOuts = palletIds.length
+      ? await prisma.stockMovement.findMany({
+          where: { palletId: { in: palletIds }, type: 'OUT', status: 'active' },
+          select: { docNumber: true },
+        })
+      : [];
+    if (activeOuts.length > 0) {
+      const ogpNums = [...new Set(activeOuts.map(m => m.docNumber))];
+      return sendError(res, `Cannot edit IGP — undo related OGP first: ${ogpNums.join(', ')}`, 409);
+    }
+
     const palletUpdates = (pallets as any[]).map((pallet: any) => {
       const itemUpdate = items.find((i: any) => i.palletId === pallet.id);
+      const newCartons = itemUpdate?.cartons ?? Number(pallet.cartons);
+      const newWeightPerCarton = itemUpdate?.weightPerCarton ?? Number(pallet.weightPerCarton);
+      const newTotalWeight = newCartons * newWeightPerCarton;
       return prisma.pallet.update({
         where: { id: pallet.id },
         data: {
@@ -461,9 +501,9 @@ router.put('/igp/:number', requireMinRole('supervisor'), validate(editIGPSchema)
           revised:              true,
           revisedAt:            now,
           ...(itemUpdate && {
-            cartons:         itemUpdate.cartons         ?? pallet.cartons,
-            weightPerCarton: itemUpdate.weightPerCarton ?? pallet.weightPerCarton,
-            totalWeight:     (itemUpdate.cartons ?? Number(pallet.cartons)) * (itemUpdate.weightPerCarton ?? Number(pallet.weightPerCarton)),
+            cartons:         newCartons,
+            weightPerCarton: newWeightPerCarton,
+            totalWeight:     newTotalWeight,
             packingType:     itemUpdate.packingType ?? pallet.packingType,
             mfgDate:         itemUpdate.mfgDate    ? new Date(itemUpdate.mfgDate)    : pallet.mfgDate,
             expiryDate:      itemUpdate.expiryDate ? new Date(itemUpdate.expiryDate) : pallet.expiryDate,
@@ -477,19 +517,28 @@ router.put('/igp/:number', requireMinRole('supervisor'), validate(editIGPSchema)
       });
     });
 
-    await prisma.$transaction([
-      ...palletUpdates,
-      prisma.stockMovement.updateMany({
-        where: { docNumber: igpNumber, type: 'IN' },
+    // Also update IN movements to match pallet changes
+    const movementUpdates = (movements as any[]).map((mov: any) => {
+      const itemUpdate = items.find((i: any) => i.palletId === mov.palletId);
+      return prisma.stockMovement.update({
+        where: { id: mov.id },
         data: {
-          vehicleNo:  header.vehicleNo  ?? undefined,
-          driverName: header.driverName ?? undefined,
-          driverId:   header.driverId   ?? undefined,
+          vehicleNo:  header.vehicleNo  ?? mov.vehicleNo,
+          driverName: header.driverName ?? mov.driverName,
+          driverId:   header.driverId   ?? mov.driverId,
           revised:    true,
           revisedAt:  now,
+          ...(itemUpdate && {
+            cartons:     itemUpdate.cartons ?? mov.cartons,
+            totalWeight: (itemUpdate.cartons ?? mov.cartons) * (itemUpdate.weightPerCarton ?? Number(mov.totalWeight) / (mov.cartons || 1)),
+            productName: itemUpdate.productName ?? mov.productName,
+            productCode: itemUpdate.productCode ?? mov.productCode,
+          }),
         },
-      }),
-    ]);
+      });
+    });
+
+    await prisma.$transaction([...palletUpdates, ...movementUpdates]);
 
     sendSuccess(res, { igpNumber }, `IGP ${igpNumber} updated`);
   } catch (err) { logger.error('stock.editIGP', err); sendServerError(res); }
@@ -517,7 +566,8 @@ router.put('/ogp/:number', requireMinRole('supervisor'), validate(editOGPSchema)
     const movementUpdates = (movements as any[]).map((mov: any) => {
       const lineUpdate = (lines ?? []).find((l: any) => l.movementId === mov.id);
       const newCartons = lineUpdate?.newCartons ?? mov.cartons;
-      const wt         = lineUpdate?.weightPerCarton ?? (Number(mov.totalWeight) / (mov.cartons || 1));
+      // Prevent division by zero
+      const wt = lineUpdate?.weightPerCarton ?? (Number(mov.totalWeight) / (mov.cartons > 0 ? mov.cartons : 1));
       return prisma.stockMovement.update({
         where: { id: mov.id },
         data: {
@@ -547,7 +597,12 @@ router.put('/ogp/:number', requireMinRole('supervisor'), validate(editOGPSchema)
         if (!pallet) return null;
         const oldMov    = (movements as any[]).find((m: any) => m.palletId === l.palletId && m.type === 'OUT');
         const oldQty    = oldMov?.cartons ?? 0;
-        const remaining = Math.max(0, Number(pallet.cartons) + oldQty - l.newCartons);
+        // Validate: newCartons cannot exceed what pallet physically has + oldQty
+        const available = Number(pallet.cartons) + oldQty;
+        if (l.newCartons > available) {
+          throw new GatePassVoidError(`Cannot dispatch ${l.newCartons} cartons — only ${available} available in pallet ${l.palletId}`);
+        }
+        const remaining = Math.max(0, available - l.newCartons);
         return prisma.pallet.update({
           where: { id: pallet.id },
           data: {
@@ -575,7 +630,7 @@ const voidDocSchema = z.object({
 });
 
 // ── DOC STATUS (undo/redo eligibility) ───────────────────────────────────────
-router.get('/doc-status/:docNumber', async (req: Request, res: Response) => {
+router.get('/doc-status/:docNumber', requireMinRole('operator'), async (req: Request, res: Response) => {
   try {
     const docNumber = req.params.docNumber;
     const docType = String(req.query.type || '').toUpperCase();

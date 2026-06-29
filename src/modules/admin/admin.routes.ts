@@ -20,7 +20,7 @@ router.post('/reset-data', async (_req: Request, res: Response) => {
       const customers = await tx.customer.deleteMany();
       const drivers = await tx.driver.deleteMany();
       const vehicles = await tx.vehicle.deleteMany();
-      const counters = await tx.docCounter.deleteMany();
+      // Preserve docCounter to prevent duplicate document numbers
       const snapshots = await tx.gatePassSnapshot.deleteMany();
 
       return {
@@ -31,7 +31,6 @@ router.post('/reset-data', async (_req: Request, res: Response) => {
         customers: customers.count,
         drivers: drivers.count,
         vehicles: vehicles.count,
-        counters: counters.count,
         snapshots: snapshots.count,
       };
     });

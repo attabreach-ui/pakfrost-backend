@@ -1,11 +1,13 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../../config/database';
 import { authenticate } from '../../middleware/auth.middleware';
+import { requireMinRole } from '../../middleware/rbac.middleware';
 import { sendSuccess, sendNotFound, sendServerError } from '../../utils/response';
 import { logger } from '../../utils/logger';
 
 const router = Router();
 router.use(authenticate);
+router.use(requireMinRole('operator'));
 
 // GET /pallets — all active pallets with filters
 router.get('/', async (req: Request, res: Response) => {

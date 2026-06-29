@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import prisma from '../config/database';
 import { env } from '../config/env';
 import { sendUnauthorized } from '../utils/response';
 
@@ -17,7 +18,7 @@ declare global {
   }
 }
 
-export const authenticate = (req: Request, res: Response, next: NextFunction): void => {
+export const authenticate = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
@@ -27,6 +28,17 @@ export const authenticate = (req: Request, res: Response, next: NextFunction): v
 
     const token = authHeader.split(' ')[1];
     const payload = jwt.verify(token, env?.JWT_ACCESS_SECRET ?? '') as JwtPayload;
+
+    // Check if user is still active in database
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: { isActive: true },
+    });
+    if (!user || !user.isActive) {
+      sendUnauthorized(res, 'Account deactivated. Please contact admin.');
+      return;
+    }
+
     req.user = payload;
     next();
   } catch (err) {

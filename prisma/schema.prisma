@@ -195,7 +195,9 @@ model Pallet {
   @@index([igpNumber])
   @@index([expiryDate])
   @@index([customerId])
+  @@index([productId])
   @@index([status])
+  @@index([room, side, row, slot, position])
   @@map("pallets")
 }
 
@@ -234,6 +236,8 @@ model StockMovement {
   @@index([docNumber])
   @@index([type])
   @@index([status])
+  @@index([palletId, type, status])
+  @@index([docNumber, type])
   @@index([customerId])
   @@index([createdAt])
   @@map("stock_movements")
@@ -250,7 +254,7 @@ model GatePassSnapshot {
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  @@index([docType])
+  @@index([docNumber, docType])
   @@map("gate_pass_snapshots")
 }
 

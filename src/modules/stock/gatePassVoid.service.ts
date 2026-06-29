@@ -150,6 +150,7 @@ export async function voidOGP(ogpNumber: string, voidedBy: string, reason: strin
       movement: serializeMovement(m),
       palletId: m.palletId,
       cartonsOut,
+      weightPerCarton: wtPer, // Store original weight for correct restore
       restoreState: {
         cartons: restoredCartons,
         totalWeight: restoredCartons * wtPer,
@@ -175,7 +176,6 @@ export async function voidOGP(ogpNumber: string, voidedBy: string, reason: strin
           cartons: line.restoreState.cartons,
           totalWeight: line.restoreState.totalWeight,
           status: line.restoreState.status,
-          voidedAt: null,
         },
       })
     ),
@@ -237,7 +237,7 @@ export async function restoreOGP(ogpNumber: string, restoredBy: string) {
   const ops: any[] = lines.map((line: any) => {
     const pallet = palletMap.get(line.palletId)!;
     const remaining = Number(pallet.cartons) - line.cartonsOut;
-    const wtPer = Number(pallet.weightPerCarton);
+    const wtPer = line.weightPerCarton ?? Number(pallet.weightPerCarton); // Use snapshot weight if available
     return prisma.pallet.update({
       where: { id: line.palletId },
       data: {
@@ -378,9 +378,40 @@ export async function restoreIGP(igpNumber: string, restoredBy: string) {
         data: {
           status: 'active',
           voidedAt: null,
+          // Restore all pallet fields from snapshot
+          igpNumber: sp.igpNumber,
+          vehicleNo: sp.vehicleNo,
+          driverName: sp.driverName,
+          driverId: sp.driverId,
+          sealNumber: sp.sealNumber,
+          productId: sp.productId,
+          customerId: sp.customerId,
+          productName: sp.productName,
+          productCode: sp.productCode,
+          customerName: sp.customerName,
           cartons: sp.cartons,
+          weightPerCarton: sp.weightPerCarton,
           totalWeight: sp.totalWeight,
-          ...(sp.room && { room: sp.room, side: sp.side, row: sp.row, slot: sp.slot, position: sp.position }),
+          packingType: sp.packingType,
+          mfgDate: sp.mfgDate ? new Date(sp.mfgDate) : null,
+          expiryDate: sp.expiryDate ? new Date(sp.expiryDate) : null,
+          batchNo: sp.batchNo,
+          lotNo: sp.lotNo,
+          orderRef: sp.orderRef,
+          dateIn: sp.dateIn ? new Date(sp.dateIn) : null,
+          timeIn: sp.timeIn,
+          departureTime: sp.departureTime,
+          room: sp.room,
+          side: sp.side,
+          row: sp.row,
+          slot: sp.slot,
+          position: sp.position,
+          condition: sp.condition,
+          temperatureAtReceipt: sp.temperatureAtReceipt,
+          productTemperature: sp.productTemperature,
+          notes: sp.notes,
+          revised: sp.revised,
+          revisedAt: sp.revisedAt ? new Date(sp.revisedAt) : null,
         },
       })
     ),
